@@ -7,191 +7,65 @@ import os
 import tempfile
 from tqdm import tqdm
 import json
+import base64
 
-st.write("Classification")
+with open('style.css') as f :
+  st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+  
+background_image = """
+<style>
+[data-testid="stAppViewContainer"] > .main {
+    background-image: url("https://st4.depositphotos.com/6168506/24532/i/450/depositphotos_245324140-stock-photo-abstract-blurred-background-landscape-sunset.jpg");
+    background-size: 100vw 100vh;  # This sets the size to cover 100% of the viewport width and height
+    background-position: center;  
+    background-repeat: no-repeat;
+}
+</style>
+"""
 
-file = st.file_uploader("Please upload an brain scan file", type=["jpg", "png"])
+st.markdown(background_image, unsafe_allow_html=True)  
+
+html_temp = """
+    <div style="background-color:transparent;padding:10px;border-radius:5px">
+    <h1 style="color:darkblue;text-align:center;font-family:Callibri;"><b>Weed Detection</b></h1>
+    </div>
+    """
+st.markdown(html_temp,unsafe_allow_html=True)
+
+file = st.file_uploader("", type=["jpg", "png"])
 import cv2
 from PIL import Image, ImageOps
 import numpy as np
 #st.set_option('deprecation.showfileUploaderEncoding', False)
 model=tf.keras.models.load_model('code.h5')
-model_without_last_two_fc = tf.keras.models.Model(model.inputs,model.layers[-5].output)
-svm_model_path = "/Volumes/FILES/Weed/Website/svm_classifier.pkl"
+model_without_last_2FC = tf.keras.models.Model(model.inputs,model.layers[-5].output)
+svm_model_path = "/Volumes/FILES/Weed/Website/svm_classifer.pkl"
 with open(svm_model_path,'rb') as svm:
     svm_model = pickle.load(svm)
-def iou_calc(bb1 , bb2):
-  
-    true_xmin, true_ymin, true_width, true_height  = bb1
-    bb_xmin, bb_ymin,  bb_width, bb_height = bb2
-
-    true_xmax = true_xmin + true_width
-    true_ymax = true_ymin + true_height
-    bb_xmax = bb_xmin + bb_width
-    bb_ymax = bb_ymin + bb_height
-
-    #calculating area
-    true_area = true_width * true_height
-    bb_area   = bb_width * bb_height 
-
-    #calculating itersection cordinates
-    inter_xmin = max(true_xmin , bb_xmin) 
-    inter_ymin = max(true_ymin , bb_ymin)
-    inter_xmax = min(true_xmax , bb_xmax)
-    inter_ymax = min(true_ymax , bb_ymax)
-
-    if inter_xmax <= inter_xmin or inter_ymax <= inter_ymin:
-        iou = 0
 
 
-    else:
-        inter_area = (inter_xmax - inter_xmin) * (inter_ymax - inter_ymin)
-
-
-        iou = inter_area / (true_area + bb_area - inter_area)
-        
-    assert iou<=1
-    assert iou>=0
     
-    return iou
-def detection(img_path,confidence=0.9,iou_thresh=0.1):
-    
-    # appling selective search
-    img = plt.imread(img_path)
-    cv2.setUseOptimized(True);
-    ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
-    ss.setBaseImage(img)
-    ss.switchToSelectiveSearchFast()
-    rects = ss.process()
-    sel_rects = rects[:2000]
-    
-    pred_crop=[]
-    pred_weed=[]
-    for index, rect in tqdm(enumerate(sel_rects)):
-
-        x,y,w,h = rect
-        roi = img[y:y+h,x:x+w,:]
-        resized_roi = cv2.resize(roi,(224,224))/255
-        
-        # Feature extraction
-        
-        feature = model_without_last_two_fc.predict(resized_roi.reshape(-1,224,224,3))
-        
-        # SVM prediction
-        pred = svm_model.predict_proba(feature.reshape(-1,4096))
-        pred_lab=svm_model.predict(feature.reshape(-1,4096))
-
-        if pred_lab == 'crop' and np.max(pred)>confidence:
-            pred_crop.append([list(rect),np.max(pred)])
-        elif pred_lab=='weed' and np.max(pred)>confidence:
-            pred_weed.append([list(rect),np.max(pred)])
-            
-    final = []
-    
-    # Detection for crop class
-    if len(pred_crop) != 0:
-        pred_score_crop = [x[1] for x in pred_crop]
-        pred_bb_crop = [x[0] for x in pred_crop]
-
-        for i in range(len(pred_crop)):
-            temp_bb , temp_score = pred_bb_crop.copy() , pred_score_crop.copy()
-            if len(temp_bb) !=0:
-
-                max_score_box = temp_bb[np.argmax(temp_score)]
-
-                if [max_score_box,np.max(temp_score)] not in final:
-                    final.append([max_score_box,np.max(temp_score),'crop'])
-                    index_should_del = []
-
-                    for ind,other_bb in enumerate(temp_bb):
-                        iou_score = iou_calc(max_score_box , other_bb)
-                        
-                        # Non maximum suppression(nms)
-                        
-                        if iou_score >= iou_thresh:
-                            index_should_del.append(ind)
-
-                    pred_bb_crop    = []
-                    pred_score_crop = []
-                    for bb_index ,bb_value in enumerate(temp_bb) :
-                        if bb_index not in index_should_del:
-                            pred_bb_crop.append(bb_value)
-
-                    for score_index ,score_value in enumerate(temp_score) :
-                        if score_index not in index_should_del:
-                            pred_score_crop.append(score_value)
-                else:
-                    continue
-
-            else:
-                break
-
-    # Detection for weed class
-
-    if len(pred_weed) != 0:
-        pred_score_weed = [x[1] for x in pred_weed]
-        pred_bb_weed = [x[0] for x in pred_weed]
-
-        for i in range(len(pred_weed)):
-            temp_bb , temp_score = pred_bb_weed.copy() , pred_score_weed.copy()
-            if len(temp_bb) !=0:
-
-                max_score_box = temp_bb[np.argmax(temp_score)]
-
-                if [max_score_box,np.max(temp_score)] not in final:
-                    final.append([max_score_box,np.max(temp_score),'weed'])
-                    index_should_del = []
-
-                    for ind,other_bb in enumerate(temp_bb):
-                        iou_score = iou_calc(max_score_box , other_bb)
-
-                        if iou_score >= iou_thresh:
-                            index_should_del.append(ind)
-
-                    pred_bb_weed    = []
-                    pred_score_weed = []
-                    for bb_index ,bb_value in enumerate(temp_bb) :
-                        if bb_index not in index_should_del:
-                            pred_bb_weed.append(bb_value)
-
-                    for score_index ,score_value in enumerate(temp_score) :
-                        if score_index not in index_should_del:
-                            pred_score_weed.append(score_value)
-                else:
-                    continue
-
-            else:
-                break
-    
-   
-    imOut = img.copy()
-    for rect,score,cls in final:
-        
-        x,y,w,h = rect
-        if cls == 'weed':
-            color =(255,0,0)
-        if cls == 'crop':
-            color = (0,255,0)
-
-        cv2.rectangle(imOut,(x,y),(x+w,y+h),color,2)
-
-        cv2.putText(imOut,cls+':'+str(round(score*100,2)),(x,y-8),cv2.FONT_HERSHEY_SIMPLEX,1, color, 2, cv2.LINE_AA)
-    plt.imshow(imOut)
-    
-    cv2.imwrite('prediction.jpeg',imOut)
-    st.image(imOut)
-
-    return final 
-
 if file is None:
-    st.text("Please upload an image file")
+    st.text("")
 else:
     image = Image.open(file)
-    #st.image(image, use_column_width=True)
+    new_image = image.resize((448, 356))
+    st.image(new_image)
     if file:
         temp_dir = tempfile.mkdtemp()
         path = os.path.join(temp_dir, file.name)
         with open(path, "wb") as f:
                 f.write(file.getvalue())
-    predictions = detection(path)
-    st.image(predictions)
+    img = cv2.imread(path)
+    rgb = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb,(224,224))
+    feature_of_img = model_without_last_2FC.predict(resized.reshape(1,224,224,3)/255)
+    pred = svm_model.predict(feature_of_img.reshape(-1,4096))
+    prob = svm_model.predict_proba(feature_of_img.reshape(-1,4096))
+    con = np.max(prob) * 100
+    conf = con.round(2) 
+    col1, col2 = st.columns(2)
+    subcol1, subcol2 = col1.columns(2)
+    subcol3, subcol4 = col2.columns(2)
+    subcol2.success(f"**Prediction:\n {pred[0]}**")
+    subcol3.success(f"**Confidence:\n {conf}**")
